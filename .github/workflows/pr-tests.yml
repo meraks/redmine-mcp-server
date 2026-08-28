@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - develop
+
+  push:
+    branches:
+      - develop
+
+  workflow_dispatch:  # 👈 allows manual run from GitHub UI
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - name: Set up environment
+        run: |
+          uv sync --locked --extra test --extra dev
+      - name: Generate test SSL certificates
+        run: |
+          chmod +x tests/fixtures/ssl/generate-test-certs.sh
+          tests/fixtures/ssl/generate-test-certs.sh
+      - name: Run code quality checks
+        run: |
+          uv run flake8 src/ --max-line-length=88
+          uv run black --check src/ --line-length=88
+      - name: Run tests
+        run: |
+          uv run pytest -m "not integration" tests/
