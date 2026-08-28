@@ -105,6 +105,7 @@ def main():
     # Check for stdio mode (for Claude Code, Claude Desktop, etc.)
     if "--stdio" in sys.argv:
         import asyncio
+
         asyncio.run(mcp.run_stdio_async())
         return
 
