@@ -205,10 +205,10 @@ cp .env.docker.example .env.docker
 docker-compose up --build
 ```
 
-### Using prebuilt image
+### Building locally (this fork is not published to GHCR)
 ```bash
-docker pull ghcr.io/jztan/redmine-mcp-server:latest
-docker run -p 8000:8000 --env-file .env.docker ghcr.io/jztan/redmine-mcp-server:latest
+docker build -t redmine-mcp-server .
+docker run -p 8000:8000 --env-file .env.docker redmine-mcp-server
 ```
 
 Then connect clients to `http://localhost:8000/mcp` (or your server's IP).
@@ -324,8 +324,8 @@ curl -X POST http://localhost:8000/mcp \
 
 ## Support
 
-- **GitHub**: https://github.com/jztan/redmine-mcp-server
-- **Issues**: https://github.com/jztan/redmine-mcp-server/issues
+- **GitHub**: https://github.com/meraks/redmine-mcp-server
+- **Issues**: https://github.com/meraks/redmine-mcp-server/issues
 - **OAuth Setup**: See `docs/oauth-setup.md`
 - **Legacy Per-User Auth**: See `docs/legacy-per-user-auth.md`
 - **Troubleshooting**: See `docs/troubleshooting.md`

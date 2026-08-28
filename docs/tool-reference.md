@@ -165,8 +165,8 @@ When enabled, the following tools return an error instead of executing
 - `upload_file`
 - `delete_file`
 - `import_time_entries`
-- `update_checklist_item` (also requires `REDMINE_CHECKLISTS_ENABLED=true`)
-- `create_checklist_item` (also requires `REDMINE_CHECKLISTS_ENABLED=true`)
+- `update_checklist_item` (also requires `REDMINE_CHECKLISTS_ENABLED=true`) — **not in this fork**
+- `create_checklist_item` (also requires `REDMINE_CHECKLISTS_ENABLED=true`) — **not in this fork**
 - `manage_project_member` — all actions
 - `manage_issue_watcher` — all actions
 - `manage_issue_note` — all actions
@@ -177,9 +177,9 @@ When enabled, the following tools return an error instead of executing
 - `manage_redmine_wiki_page` — `create`, `update`, `delete`, `rename` blocked; `list`, `get` allowed
 - `manage_issue_category` — `create`, `update`, `delete` blocked; `list` allowed
 - `manage_issue_relation` — `create`, `delete` blocked; `list` allowed
-- `manage_product` — `create`, `update` blocked; `list`, `get` allowed (also requires `REDMINE_PRODUCTS_ENABLED=true`)
-- `manage_contact` — `create`, `update`, `delete`, `assign_to_project`, `remove_from_project` blocked; `list`, `get` allowed (also requires `REDMINE_CRM_ENABLED=true`)
-- `manage_document` — `create`, `update` blocked; `list`, `get` allowed (also requires `REDMINE_DMSF_ENABLED=true`)
+- `manage_product` — `create`, `update` blocked; `list`, `get` allowed (also requires `REDMINE_PRODUCTS_ENABLED=true`) — **not in this fork**
+- `manage_contact` — `create`, `update`, `delete`, `assign_to_project`, `remove_from_project` blocked; `list`, `get` allowed (also requires `REDMINE_CRM_ENABLED=true`) — **not in this fork**
+- `manage_document` — `create`, `update` blocked; `list`, `get` allowed (also requires `REDMINE_DMSF_ENABLED=true`) — **not in this fork**
 
 All read tools (`get_redmine_issue`, `list_redmine_issues`, `list_redmine_projects`, etc.) continue to work normally. The admin-gated `cleanup_attachment_files` tool (when registered via `REDMINE_MCP_EXPOSE_ADMIN_TOOLS=true`) is also unaffected — it performs local filesystem cleanup, not Redmine mutations.
 
@@ -1299,6 +1299,8 @@ manage_issue_category(action="delete", category_id=3, reassign_to_id=7)
 ---
 
 ## MCP Apps (Interactive Tools)
+
+> **Note:** the interactive MCP Apps tools below (`show_triage_board`, `get_triage_board_data`, `show_project_dashboard`, `get_project_dashboard_data`) are **not included in this fork**.
 
 ### `show_triage_board`
 

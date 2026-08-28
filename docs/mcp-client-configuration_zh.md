@@ -205,10 +205,10 @@ cp .env.docker.example .env.docker
 docker-compose up --build
 ```
 
-### 使用预构建镜像
+### 本地构建（此分支未发布到 GHCR）
 ```bash
-docker pull ghcr.io/jztan/redmine-mcp-server:latest
-docker run -p 8000:8000 --env-file .env.docker ghcr.io/jztan/redmine-mcp-server:latest
+docker build -t redmine-mcp-server .
+docker run -p 8000:8000 --env-file .env.docker redmine-mcp-server
 ```
 
 客户端连接 `http://localhost:8000/mcp`（或服务器 IP）。
@@ -343,8 +343,8 @@ curl -X POST http://localhost:8000/mcp \
 
 ## 技术支持
 
-- **GitHub**: https://github.com/jztan/redmine-mcp-server
-- **Issues**: https://github.com/jztan/redmine-mcp-server/issues
+- **GitHub**: https://github.com/meraks/redmine-mcp-server
+- **Issues**: https://github.com/meraks/redmine-mcp-server/issues
 - **OAuth 设置**: 见 `docs/oauth-setup.md`
 - **Legacy Per-User 认证**: 见 `docs/legacy-per-user-auth.md`
 - **故障排除**: 见 `docs/troubleshooting.md`

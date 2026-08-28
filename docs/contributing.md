@@ -73,7 +73,9 @@ After v2.0, the codebase is organized by resource:
 
 ### Tool implementations
 
-Tools live under `src/redmine_mcp_server/tools/`, one file per Redmine resource; the interactive MCP Apps tools live under `src/redmine_mcp_server/apps/`:
+Tools live under `src/redmine_mcp_server/tools/`, one file per Redmine resource.
+
+> **This fork differs from upstream:** the `apps/` MCP Apps (triage board, project dashboard) and the plugin-gated tools — Checklists (`tools/checklists.py`), Products (`tools/products.py`), CRM/Contacts (`tools/contacts.py`), and DMSF Documents (`tools/documents.py`) — are **not included**. Only the core tool modules under `tools/` exist.
 
 | File | Tools |
 |---|---|
@@ -84,16 +86,10 @@ Tools live under `src/redmine_mcp_server/tools/`, one file per Redmine resource;
 | `tools/files.py` | File upload/download/delete + attachment URLs (4 tools, plus `cleanup_attachment_files` admin-gated) |
 | `tools/enumeration.py` | Trackers, statuses, priorities, users, queries (6 tools) |
 | `tools/search.py` | Global search across resources (1 tool) |
-| `tools/checklists.py` | RedmineUP Checklists plugin (3 tools, gated) |
 | `tools/gantt.py` | Gantt chart composite read tool (1 tool) |
-| `tools/products.py` | RedmineUP Products plugin (1 tool, gated) |
-| `tools/contacts.py` | RedmineUP CRM plugin (1 tool, gated) |
-| `tools/documents.py` | DMSF plugin documents (1 tool with list/get/create/update actions, gated) |
 | `tools/meta.py` | Server introspection: `get_mcp_server_info` (1 tool, always available) |
-| `apps/triage_board.py` | Interactive Kanban triage board MCP App (2 tools) |
-| `apps/project_dashboard.py` | Interactive project dashboard MCP App (2 tools) |
 
-Total: **51 MCP tools** unconditionally registered, **plus 1 admin-gated** (`cleanup_attachment_files`, enabled by `REDMINE_MCP_EXPOSE_ADMIN_TOOLS=true`) for a maximum of 52.
+Total: **42 core MCP tools** registered, **plus 1 admin-gated** (`cleanup_attachment_files`, enabled by `REDMINE_MCP_EXPOSE_ADMIN_TOOLS=true`).
 
 Each `tools/<resource>.py` also owns its resource-specific serializers (`_X_to_dict` helpers).
 
@@ -219,7 +215,7 @@ Per-action handlers stay responsible for: their own parameter validation, callin
 
 **Important:** keep the public `manage_X` tool's full explicit parameter list (FastMCP rejects `**kwargs` in tool signatures). Only the body changes to return the handler-map dict.
 
-For plugin-gated tools (`manage_product`, `manage_contact`), wrap the dispatcher in a feature-flag check:
+For plugin-gated tools (`manage_product`, `manage_contact`) — **note:** these plugin tools are not included in this fork — wrap the dispatcher in a feature-flag check:
 
 ```python
 @mcp.tool()
@@ -642,8 +638,7 @@ redmine-mcp-server/
 ├── src/redmine_mcp_server/
 │   ├── main.py              # Entry point; build_authenticated_app() mounts the MCP app + discovery routes (oauth / oauth-proxy)
 │   ├── server.py            # Owns the shared `mcp = FastMCP(...)` instance; _select_auth_provider() picks the auth provider
-│   ├── tools/               # 13 per-resource tool modules (47 MCP tools + 1 admin-gated)
-│   ├── apps/                # Interactive MCP Apps: triage board + project dashboard (4 tools)
+│   ├── tools/               # per-resource tool modules (42 core MCP tools + 1 admin-gated)
 │   ├── _auth.py             # RedmineAuthProvider (introspection + AS-metadata + revoke), oauth mode
 │   ├── _oauth_proxy.py      # OAuthProxy factory (DCR + authorize/token/revoke proxy), oauth-proxy mode
 │   ├── _mount.py            # Public base-URL / MCP-path / mount-prefix helpers

@@ -376,8 +376,8 @@ though the transfer itself completed.
 
 3. **Reinstall Package**
    ```bash
-   pip uninstall redmine-mcp-server
-   pip install redmine-mcp-server
+    pip uninstall redmine-mcp-server
+    pip install .
    ```
 
 ### Dependency Conflicts
@@ -392,8 +392,8 @@ though the transfer itself completed.
    ```bash
    # Create new virtual environment
    python -m venv .venv
-   source .venv/bin/activate
-   pip install redmine-mcp-server
+    source .venv/bin/activate
+    pip install .
    ```
 
 2. **Update pip and setuptools**
@@ -891,7 +891,7 @@ docker logs -f <container-id>
 If your issue isn't covered here:
 
 1. **Check GitHub Issues**
-   - Search existing issues: https://github.com/jztan/redmine-mcp-server/issues
+    - Search existing issues: https://github.com/meraks/redmine-mcp-server/issues
    - Look for similar problems and solutions
 
 2. **Create New Issue**
