@@ -43,5 +43,3 @@ attachments/
 required_fields.json
 probe_editability.py
 .probe_raw.json
-TUTORIAL_CLAUDE_CODE.md
-TUTORIAL_CLAUDE_CODE_zh.md
