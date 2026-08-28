@@ -8,7 +8,7 @@
 
 A Model Context Protocol (MCP) server that connects AI assistants to Redmine. It exposes your Redmine instance's projects, issues, time tracking, wiki pages, and files as MCP tools.
 
-> **Fork notice.** This repository ([`meraks/redmine-mcp-server`](https://github.com/meraks/redmine-mcp-server)) is a fork of [`jztan/redmine-mcp-server`](https://github.com/jztan/redmine-mcp-server). It follows upstream closely but trims some optional plugin tools and the MCP Apps UI, and adds a conditional required-fields feature. **It is not published to PyPI or any container registry — install from source.** See [Differences from upstream](#differences-from-upstream) below.
+> **Fork notice.** This repository ([`meraks/redmine-mcp-server`](https://github.com/meraks/redmine-mcp-server)) started as a fork of [`jztan/redmine-mcp-server`](https://github.com/jztan/redmine-mcp-server), but it has **diverged from the original repo and is no longer kept in sync with upstream** — it is maintained independently. It trims some optional plugin tools and the MCP Apps UI, and adds a conditional required-fields feature. **It is not published to PyPI or any container registry — install from source or from the Release wheel.** See [Differences from upstream](#differences-from-upstream) below.
 
 **mcp-name: io.github.meraks/redmine-mcp-server**
 
@@ -36,12 +36,12 @@ A Model Context Protocol (MCP) server that connects AI assistants to Redmine. It
 
 ## Differences from upstream
 
-This fork is kept close to [`jztan/redmine-mcp-server`](https://github.com/jztan/redmine-mcp-server), with the following deliberate changes:
+This fork **has diverged from the original repo** ([`jztan/redmine-mcp-server`](https://github.com/jztan/redmine-mcp-server)) and is maintained independently — it is no longer a drop-in mirror of upstream. The deliberate differences from the original repo are:
 
 - **Added — Conditional Required Fields.** A new `get_required_fields` tool, plus a `REDMINE_REQUIRED_FIELDS_FILE` JSON config, lets you declare required-field rules that vary by tracker / category / status. `create_redmine_issue` auto-fills declared defaults and rejects a still-missing required field with a clear message *before* it ever calls Redmine. This addresses Redmine's stock REST API limitation where `is_required` is only visible on the field definition, not on workflow/role/tracker-imposed rules.
 - **Removed — optional plugin tools.** The Checklists (`REDMINE_CHECKLISTS_ENABLED`), Products (`REDMINE_PRODUCTS_ENABLED`), CRM/Contacts (`REDMINE_CRM_ENABLED`), and DMSF Documents (`REDMINE_DMSF_ENABLED`) tools are not built into this fork.
 - **Removed — MCP Apps UI.** The interactive Kanban / triage board (`show_triage_board`) and the project dashboard App are not included.
-- **Not published to PyPI or GHCR.** This fork is distributed as source only — install from a git checkout (see [Installation](#installation)) rather than `uv tool install redmine-mcp-server`, which would fetch the upstream package.
+- **Not published to PyPI or GHCR.** This fork is distributed as source and as a prebuilt wheel on [GitHub Releases](https://github.com/meraks/redmine-mcp-server/releases) — see [Installation](#installation). Do **not** run `uv tool install redmine-mcp-server`, which would fetch the upstream package, not this fork.
 
 All core tools (issues, projects, time tracking, wiki, files, Gantt, search, discovery), the four authentication modes, read-only mode, pagination, and HTTP file serving are carried over unchanged from upstream.
 
@@ -129,6 +129,20 @@ nano .env  # or use your preferred editor
 # Run in stdio mode (recommended for local clients like Claude Code)
 redmine-mcp-server --stdio
 ```
+
+### Install from the Release wheel (prebuilt, no PyPI)
+
+Prebuilt wheels are attached to [GitHub Releases](https://github.com/meraks/redmine-mcp-server/releases). Download the latest `redmine_mcp_server-*.whl` and install it — this avoids building from source:
+
+```bash
+# Install into the current environment
+pip install redmine_mcp_server-2.11.0-py3-none-any.whl
+
+# Or install the MCP command globally via uv
+uv tool install redmine_mcp_server-2.11.0-py3-none-any.whl
+```
+
+The wheel is built from this fork's `develop` branch and is **not** the upstream package. Pick the `.whl` matching the release you want; see the [Releases page](https://github.com/meraks/redmine-mcp-server/releases) for the current version.
 
 ### Docker Deployment
 
