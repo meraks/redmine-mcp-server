@@ -8,7 +8,7 @@
 
 A Model Context Protocol (MCP) server that connects AI assistants to Redmine. It exposes your Redmine instance's projects, issues, time tracking, wiki pages, and files as MCP tools.
 
-> **Fork notice.** This repository ([`meraks/redmine-mcp-server`](https://github.com/meraks/redmine-mcp-server)) started as a fork of [`jztan/redmine-mcp-server`](https://github.com/jztan/redmine-mcp-server), but it has **diverged from the original repo and is no longer kept in sync with upstream** — it is maintained independently. It trims some optional plugin tools and the MCP Apps UI, and adds a conditional required-fields feature. **It is not published to PyPI or any container registry — install from source or from the Release wheel.** See [Differences from upstream](#differences-from-upstream) below.
+> **Fork notice.** This repository ([`meraks/redmine-mcp-server`](https://github.com/meraks/redmine-mcp-server)) started as a fork of [`jztan/redmine-mcp-server`](https://github.com/jztan/redmine-mcp-server), but it has **diverged from the original repo and is no longer kept in sync with upstream** — it is maintained independently. It trims some optional plugin tools and the MCP Apps UI, and adds a conditional required-fields feature. **It is not published to PyPI or any container registry — install from source or from the Release wheel.** This fork is developed on top of the original repository, and **all licensing and permissions are kept consistent with the original repo** (MIT). See [Differences from upstream](#differences-from-upstream) below.
 
 **mcp-name: io.github.meraks/redmine-mcp-server**
 
@@ -826,7 +826,7 @@ Per-release contributor credits are listed in the [Changelog](./CHANGELOG.md).
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This fork is developed on top of [`jztan/redmine-mcp-server`](https://github.com/jztan/redmine-mcp-server). It inherits the original project's license, and **all rights and permissions are consistent with the original repository**: this project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details. Copyright for the inherited code belongs to the original author(s); modifications made in this fork are also released under the same MIT License.
 
 ## Blog posts
 
