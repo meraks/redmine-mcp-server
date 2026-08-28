@@ -1,0 +1,427 @@
+"""Wiki page tool: list/get/create/update/delete/rename actions."""
+
+from typing import Any, Dict, List, Literal, Optional, Union
+
+from .._client import _get_redmine_client
+from .._decorators import ActionMode, action_dispatch
+from .._errors import _handle_redmine_error
+from .._offload import in_thread, offloaded
+from .files import _build_upload_descriptors
+from .._serialization import (
+    _attachment_to_dict,
+    _iter_capped,
+    _named_ref,
+    _safe_isoformat,
+    wrap_insecure_content,
+)
+from ..server import mcp
+
+
+def _wiki_page_to_dict(
+    wiki_page: Any, include_attachments: bool = True
+) -> Dict[str, Any]:
+    """Convert a wiki page object to a dictionary.
+
+    Args:
+        wiki_page: Redmine wiki page object
+        include_attachments: Whether to include attachment metadata
+
+    Returns:
+        Dictionary with wiki page data
+    """
+    result: Dict[str, Any] = {
+        "title": wiki_page.title,
+        "text": wrap_insecure_content(wiki_page.text),
+        "version": wiki_page.version,
+    }
+
+    # Add optional timestamp fields
+    if hasattr(wiki_page, "created_on"):
+        result["created_on"] = (
+            str(wiki_page.created_on) if wiki_page.created_on else None
+        )
+    else:
+        result["created_on"] = None
+
+    if hasattr(wiki_page, "updated_on"):
+        result["updated_on"] = (
+            str(wiki_page.updated_on) if wiki_page.updated_on else None
+        )
+    else:
+        result["updated_on"] = None
+
+    # Add author info
+    if hasattr(wiki_page, "author"):
+        result["author"] = _named_ref(wiki_page.author)
+
+    # Add project info. Only Redmine 7.0+ returns this field (Redmine
+    # #43569); on older versions the hasattr guard omits the key. It
+    # arrives as a plain dict rather than a resource -- see _named_ref.
+    if hasattr(wiki_page, "project"):
+        result["project"] = _named_ref(wiki_page.project)
+
+    # Process attachments if requested. Routes through the shared
+    # _attachment_to_dict helper so wiki and issue attachments produce
+    # identical shapes (content_url + author + REDMINE_PUBLIC_URL
+    # rewriting are now in the wiki response too -- closes #118).
+    if include_attachments and hasattr(wiki_page, "attachments"):
+        result["attachments"] = [
+            _attachment_to_dict(att) for att in wiki_page.attachments
+        ]
+
+    return result
+
+
+def _require_wiki_page_title(action: str, wiki_page_title: Any) -> Optional[str]:
+    """Return an error message if wiki_page_title is missing/invalid."""
+    if not isinstance(wiki_page_title, str) or not wiki_page_title.strip():
+        return (
+            f"wiki_page_title is required for action '{action}' "
+            "and must be a non-empty string."
+        )
+    return None
+
+
+@offloaded
+def _list_wiki_pages_action(
+    project_id: Optional[Union[str, int]] = None,
+    **_: Any,
+) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
+    try:
+        client = _get_redmine_client()
+        pages = client.wiki_page.filter(project_id=project_id)
+        items: List[Dict[str, Any]] = []
+        for page in _iter_capped(pages):
+            entry: Dict[str, Any] = {
+                "title": getattr(page, "title", None),
+                "version": getattr(page, "version", None),
+                "created_on": _safe_isoformat(getattr(page, "created_on", None)),
+                "updated_on": _safe_isoformat(getattr(page, "updated_on", None)),
+            }
+            parent = getattr(page, "parent", None)
+            if parent is not None:
+                entry["parent_title"] = getattr(parent, "title", None)
+            items.append(entry)
+        return items
+    except Exception as e:
+        return _handle_redmine_error(
+            e,
+            f"listing wiki pages in project {project_id}",
+            {"resource_type": "wiki pages", "resource_id": project_id},
+        )
+
+
+@offloaded
+def _get_wiki_page_action(
+    project_id: Optional[Union[str, int]] = None,
+    wiki_page_title: Optional[str] = None,
+    version: Optional[int] = None,
+    include_attachments: bool = True,
+    **_: Any,
+) -> Dict[str, Any]:
+    title_error = _require_wiki_page_title("get", wiki_page_title)
+    if title_error is not None:
+        return {"error": title_error}
+    try:
+        if version:
+            wiki_page = _get_redmine_client().wiki_page.get(
+                wiki_page_title, project_id=project_id, version=version
+            )
+        else:
+            wiki_page = _get_redmine_client().wiki_page.get(
+                wiki_page_title, project_id=project_id
+            )
+        return _wiki_page_to_dict(wiki_page, include_attachments)
+    except Exception as e:
+        return _handle_redmine_error(
+            e,
+            f"fetching wiki page '{wiki_page_title}' in project {project_id}",
+            {"resource_type": "wiki page", "resource_id": wiki_page_title},
+        )
+
+
+async def _create_wiki_page_action(
+    project_id: Optional[Union[str, int]] = None,
+    wiki_page_title: Optional[str] = None,
+    text: Optional[str] = None,
+    comments: Optional[str] = None,
+    uploads: Optional[List[Dict[str, Any]]] = None,
+    **_: Any,
+) -> Dict[str, Any]:
+    title_error = _require_wiki_page_title("create", wiki_page_title)
+    if title_error is not None:
+        return {"error": title_error}
+    if text is None:
+        return {"error": "text is required for action 'create'"}
+
+    upload_descriptors = None
+    if uploads:
+        upload_descriptors, upload_error = await _build_upload_descriptors(uploads)
+        if upload_error is not None:
+            return upload_error
+
+    create_kwargs: Dict[str, Any] = {
+        "project_id": project_id,
+        "title": wiki_page_title,
+        "text": text,
+        "comments": comments if comments else None,
+    }
+    if upload_descriptors:
+        create_kwargs["uploads"] = upload_descriptors
+
+    def _run():
+        try:
+            wiki_page = _get_redmine_client().wiki_page.create(**create_kwargs)
+            return _wiki_page_to_dict(wiki_page)
+        except Exception as e:
+            return _handle_redmine_error(
+                e,
+                f"creating wiki page '{wiki_page_title}' in project {project_id}",
+                {"resource_type": "wiki page", "resource_id": wiki_page_title},
+            )
+
+    return await in_thread(_run)
+
+
+async def _update_wiki_page_action(
+    project_id: Optional[Union[str, int]] = None,
+    wiki_page_title: Optional[str] = None,
+    text: Optional[str] = None,
+    comments: Optional[str] = None,
+    uploads: Optional[List[Dict[str, Any]]] = None,
+    **_: Any,
+) -> Dict[str, Any]:
+    title_error = _require_wiki_page_title("update", wiki_page_title)
+    if title_error is not None:
+        return {"error": title_error}
+    if text is None and not uploads:
+        return {
+            "error": (
+                "text is required for action 'update' unless uploads is provided."
+            )
+        }
+
+    existing_text = None
+    existing_version = None
+    if text is None:
+        # Redmine rejects a wiki PUT with a blank body (422 "Text field
+        # cannot be blank"), so an attachment-only update re-reads the page
+        # and echoes its text back. This read-back MUST happen before
+        # _build_upload_descriptors() below: that call already POSTs each
+        # file to /uploads.json, so if it ran first and the title/project
+        # turned out to be wrong, the read-back's 404 would strand those
+        # already-uploaded blobs on the server with nothing left to attach
+        # them to. Doing the cheap, most-likely-to-fail GET first avoids
+        # that. Do not reorder this back for "tidiness".
+        def _read_back():
+            existing = _get_redmine_client().wiki_page.get(
+                wiki_page_title, project_id=project_id
+            )
+            # Read both attributes in the worker too: a missing included
+            # field makes python-redmine re-fetch on attribute access.
+            return existing.text, existing.version
+
+        try:
+            existing_text, existing_version = await in_thread(_read_back)
+        except Exception as e:
+            return _handle_redmine_error(
+                e,
+                f"updating wiki page '{wiki_page_title}' in project {project_id}",
+                {"resource_type": "wiki page", "resource_id": wiki_page_title},
+            )
+
+    upload_descriptors = None
+    if uploads:
+        upload_descriptors, upload_error = await _build_upload_descriptors(uploads)
+        if upload_error is not None:
+            return upload_error
+
+    update_kwargs: Dict[str, Any] = {
+        "project_id": project_id,
+        "comments": comments if comments else None,
+    }
+    if upload_descriptors:
+        update_kwargs["uploads"] = upload_descriptors
+
+    def _run():
+        try:
+            client = _get_redmine_client()
+            if text is None:
+                # Sending the version read above turns a concurrent edit into a
+                # 409 instead of a silent revert. Unchanged text does not create
+                # a new revision.
+                update_kwargs["text"] = existing_text
+                update_kwargs["version"] = existing_version
+            else:
+                update_kwargs["text"] = text
+            client.wiki_page.update(wiki_page_title, **update_kwargs)
+            wiki_page = client.wiki_page.get(wiki_page_title, project_id=project_id)
+            return _wiki_page_to_dict(wiki_page)
+        except Exception as e:
+            return _handle_redmine_error(
+                e,
+                f"updating wiki page '{wiki_page_title}' in project {project_id}",
+                {"resource_type": "wiki page", "resource_id": wiki_page_title},
+            )
+
+    return await in_thread(_run)
+
+
+@offloaded
+def _delete_wiki_page_action(
+    project_id: Optional[Union[str, int]] = None,
+    wiki_page_title: Optional[str] = None,
+    **_: Any,
+) -> Dict[str, Any]:
+    title_error = _require_wiki_page_title("delete", wiki_page_title)
+    if title_error is not None:
+        return {"error": title_error}
+
+    try:
+        _get_redmine_client().wiki_page.delete(wiki_page_title, project_id=project_id)
+        return {
+            "success": True,
+            "title": wiki_page_title,
+            "message": f"Wiki page '{wiki_page_title}' deleted successfully.",
+        }
+    except Exception as e:
+        return _handle_redmine_error(
+            e,
+            f"deleting wiki page '{wiki_page_title}' in project {project_id}",
+            {"resource_type": "wiki page", "resource_id": wiki_page_title},
+        )
+
+
+@offloaded
+def _rename_wiki_page_action(
+    project_id: Optional[Union[str, int]] = None,
+    wiki_page_title: Optional[str] = None,
+    new_title: Optional[str] = None,
+    redirect_existing_links: bool = True,
+    **_: Any,
+) -> Dict[str, Any]:
+    title_error = _require_wiki_page_title("rename", wiki_page_title)
+    if title_error is not None:
+        return {"error": title_error}
+    if not isinstance(new_title, str) or not new_title.strip():
+        return {"error": "new_title must be a non-empty string."}
+    if new_title == wiki_page_title:
+        return {"error": "new_title must differ from wiki_page_title."}
+
+    try:
+        client = _get_redmine_client()
+
+        # Redmine requires `text` on every wiki update; preserve the
+        # existing body so the rename is a pure title change.
+        existing = client.wiki_page.get(wiki_page_title, project_id=project_id)
+        existing_text = getattr(existing, "text", "") or ""
+
+        update_kwargs: Dict[str, Any] = {
+            "project_id": project_id,
+            "title": new_title,
+            "text": existing_text,
+        }
+        if redirect_existing_links:
+            update_kwargs["redirect_existing_links"] = "1"
+
+        client.wiki_page.update(wiki_page_title, **update_kwargs)
+
+        # If the API user lacks `rename_wiki_pages`, Redmine silently
+        # drops the title change. Re-fetch at the new title to confirm.
+        try:
+            renamed = client.wiki_page.get(new_title, project_id=project_id)
+        except Exception:
+            return {
+                "error": (
+                    "Rename appeared to succeed but the page is not "
+                    f"reachable at '{new_title}'. The API user may lack "
+                    "the 'rename_wiki_pages' permission (Redmine "
+                    "silently drops the title change in that case)."
+                )
+            }
+
+        renamed_dict = _wiki_page_to_dict(renamed, include_attachments=False)
+        return {"success": True, **renamed_dict}
+    except Exception as e:
+        return _handle_redmine_error(
+            e,
+            (
+                f"renaming wiki page '{wiki_page_title}' to "
+                f"'{new_title}' in project {project_id}"
+            ),
+            {"resource_type": "wiki page", "resource_id": wiki_page_title},
+        )
+
+
+@mcp.tool()
+@action_dispatch(
+    {
+        "list": ActionMode.READ,
+        "get": ActionMode.READ,
+        "create": ActionMode.WRITE,
+        "update": ActionMode.WRITE,
+        "delete": ActionMode.WRITE,
+        "rename": ActionMode.WRITE,
+    }
+)
+async def manage_redmine_wiki_page(
+    action: Literal["list", "get", "create", "update", "delete", "rename"],
+    project_id: Union[str, int],
+    wiki_page_title: Optional[str] = None,
+    version: Optional[int] = None,
+    include_attachments: bool = True,
+    text: Optional[str] = None,
+    comments: Optional[str] = None,
+    new_title: Optional[str] = None,
+    redirect_existing_links: bool = True,
+    uploads: Optional[List[Dict[str, Any]]] = None,
+) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
+    """List, get, create, update, delete, or rename a Redmine wiki page.
+
+    Args:
+        action: One of: ``list``, ``get``, ``create``, ``update``,
+            ``delete``, ``rename``.
+        project_id: Project identifier (required for all actions).
+        wiki_page_title: Wiki page title. Required for all actions
+            except ``list``.
+        version: Specific version to retrieve (``get`` only, optional).
+        include_attachments: Include attachment metadata in ``get``
+            response. Default ``True``.
+        text: Page content. Required for ``create``. Required for
+            ``update`` unless ``uploads`` is given, in which case the
+            server reuses the page's current text so an attachment-only
+            update does not have to resend the body.
+        comments: Change log comment. Optional for ``create`` and
+            ``update``.
+        new_title: New title for the page (required for ``rename``).
+        redirect_existing_links: When ``True`` (default), the rename
+            creates a redirect from ``wiki_page_title`` to ``new_title``.
+            Passed to the API as ``"1"`` / ``"0"``.
+        uploads: Files to attach, for ``create`` and ``update`` only.
+            Requires the ``edit_wiki_pages`` permission on the project.
+            Maximum 10 items, 50 MiB each. Each item needs exactly ONE
+            source key: ``file_path`` (a path on the server, inside
+            ``ATTACHMENTS_DIR`` or a directory listed in
+            ``REDMINE_MCP_UPLOAD_FILE_ROOTS``), ``source_url`` (an HTTP(S)
+            URL the server fetches), or ``content_base64``. Prefer
+            ``file_path`` or ``source_url``: ``content_base64`` sends the
+            whole file through the model. Optional per item: ``filename``
+            (required with ``content_base64``), ``content_type``,
+            ``description``. Ignored by the other actions.
+
+    Returns:
+        ``list``: list of page metadata dicts (no body text).
+        ``get`` / ``create`` / ``update``: wiki page dict.
+        ``delete``: ``{"success": True, "title": ..., "message": ...}``.
+        ``rename``: ``{"success": True, ...}`` with the renamed page's
+        metadata to confirm the title change actually applied.
+        On error: ``{"error": "..."}``.
+    """
+    return {
+        "list": _list_wiki_pages_action,
+        "get": _get_wiki_page_action,
+        "create": _create_wiki_page_action,
+        "update": _update_wiki_page_action,
+        "delete": _delete_wiki_page_action,
+        "rename": _rename_wiki_page_action,
+    }

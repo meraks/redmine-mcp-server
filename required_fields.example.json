@@ -1,0 +1,25 @@
+{
+  "_comment": "Conditional required-field rules for a Redmine whose issue model differs from stock. Copy this file to required_fields.json (or set REDMINE_REQUIRED_FIELDS_FILE to its path). Each entry under by_tracker / by_category / by_status maps a name (matched case-insensitively) to a rule with `required` (field identifiers) and `defaults` (values to auto-fill when missing). `required` entries name standard issue fields by their API key (subject, priority_id, tracker_id, status_id, category_id, fixed_version_id, assigned_to_id, start_date, due_date, done_ratio, estimated_hours, ...) and custom fields by their display name (e.g. \"Department\"). Leave any dimension empty when not needed.",
+
+  "by_tracker": {
+    "Bug": {
+      "required": ["priority_id", "Department"],
+      "defaults": { "Department": "Engineering" }
+    },
+    "Feature": {
+      "required": ["cf_15", "cf_16"]
+    }
+  },
+
+  "by_category": {
+    "Hardware": {
+      "required": ["cf_20"]
+    }
+  },
+
+  "by_status": {
+    "In Progress": {
+      "required": ["cf_8"]
+    }
+  }
+}

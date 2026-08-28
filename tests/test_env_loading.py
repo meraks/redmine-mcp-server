@@ -1,0 +1,363 @@
+"""
+Tests for .env file loading behavior.
+
+These tests verify that the server correctly loads environment variables
+from the user's current working directory, fixing issue #40 where pip-installed
+packages would fail to find the .env file.
+"""
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+class TestEnvLoading:
+    """Tests for environment configuration loading."""
+
+    def test_env_loading_from_cwd(self, tmp_path):
+        """Test that .env is loaded from current working directory.
+
+        This test verifies the fix for issue #40 where pip-installed packages
+        failed to load .env from the user's working directory.
+        """
+        # Create a .env file in a temporary directory
+        env_file = tmp_path / ".env"
+        test_url = "http://test-redmine-from-cwd.example.com"
+        test_api_key = "test_api_key_12345"
+        env_file.write_text(
+            f"REDMINE_URL={test_url}\n" f"REDMINE_API_KEY={test_api_key}\n"
+        )
+
+        # Create a test script that imports the module and checks the env vars
+        test_script = tmp_path / "test_env_check.py"
+        test_script.write_text(
+            """
+import sys
+import os
+
+# Clear any existing env vars to ensure we're testing fresh loading
+for key in ['REDMINE_URL', 'REDMINE_API_KEY', 'REDMINE_USERNAME', 'REDMINE_PASSWORD']:
+    os.environ.pop(key, None)
+
+# Import the module which triggers env loading
+from redmine_mcp_server._client import REDMINE_URL, REDMINE_API_KEY
+
+# Print the values for verification
+print(f"REDMINE_URL={REDMINE_URL}")
+print(f"REDMINE_API_KEY={REDMINE_API_KEY}")
+"""
+        )
+
+        # Run the test script from the temp directory (simulating user's project)
+        result = subprocess.run(
+            [sys.executable, str(test_script)],
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "PYTHONPATH": str(Path(__file__).parent.parent / "src"),
+            },
+        )
+
+        # Verify the output
+        assert result.returncode == 0, f"Script failed: {result.stderr}"
+        assert f"REDMINE_URL={test_url}" in result.stdout, (
+            f"Expected REDMINE_URL to be loaded from CWD .env. "
+            f"stdout: {result.stdout}, stderr: {result.stderr}"
+        )
+        assert f"REDMINE_API_KEY={test_api_key}" in result.stdout, (
+            f"Expected REDMINE_API_KEY to be loaded from CWD .env. "
+            f"stdout: {result.stdout}, stderr: {result.stderr}"
+        )
+
+    def test_env_loading_warning_when_missing_url(self, tmp_path, capsys):
+        """Test that warning is shown when REDMINE_URL is missing."""
+        # Create an empty .env file
+        env_file = tmp_path / ".env"
+        env_file.write_text("# Empty config\n")
+
+        # Create a test script that imports the module
+        test_script = tmp_path / "test_warning.py"
+        test_script.write_text(
+            """
+import sys
+import os
+
+# Clear any existing env vars
+for key in ['REDMINE_URL', 'REDMINE_API_KEY', 'REDMINE_USERNAME', 'REDMINE_PASSWORD']:
+    os.environ.pop(key, None)
+
+# Import the module which triggers env loading and warnings
+from redmine_mcp_server import _client as redmine_handler
+"""
+        )
+
+        result = subprocess.run(
+            [sys.executable, str(test_script)],
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "PYTHONPATH": str(Path(__file__).parent.parent / "src"),
+            },
+        )
+
+        # The warning is logged via logger.warning() which goes to stderr
+        combined_output = result.stdout + result.stderr
+        assert "REDMINE_URL not set" in combined_output, (
+            f"Expected warning about missing REDMINE_URL. "
+            f"stdout: {result.stdout}, stderr: {result.stderr}"
+        )
+
+    def test_env_loading_warning_when_missing_auth(self, tmp_path):
+        """Test that warning is shown when authentication is missing."""
+        # Create .env with URL but no auth
+        env_file = tmp_path / ".env"
+        env_file.write_text("REDMINE_URL=http://example.com\n")
+
+        test_script = tmp_path / "test_auth_warning.py"
+        test_script.write_text(
+            """
+import sys
+import os
+
+# Clear any existing env vars
+for key in ['REDMINE_URL', 'REDMINE_API_KEY', 'REDMINE_USERNAME', 'REDMINE_PASSWORD']:
+    os.environ.pop(key, None)
+
+from redmine_mcp_server import _client as redmine_handler
+"""
+        )
+
+        result = subprocess.run(
+            [sys.executable, str(test_script)],
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "PYTHONPATH": str(Path(__file__).parent.parent / "src"),
+            },
+        )
+
+        # Check for authentication warning (logged via logger.warning to stderr)
+        combined_output = result.stdout + result.stderr
+        assert "authentication" in combined_output.lower(), (
+            f"Expected warning about missing authentication. "
+            f"stdout: {result.stdout}, stderr: {result.stderr}"
+        )
+
+    def test_env_paths_priority(self):
+        """Test that _env_paths list has correct priority order."""
+        from redmine_mcp_server._client import _env_paths
+
+        assert len(_env_paths) >= 2, "Expected at least 2 env paths"
+        # First path should be CWD
+        assert (
+            _env_paths[0] == Path.cwd() / ".env"
+        ), "First env path should be current working directory"
+
+    def test_cwd_env_takes_precedence_over_package_env(self, tmp_path):
+        """Test that CWD .env takes precedence over package directory .env."""
+        # Create .env in temp directory with specific values
+        env_file = tmp_path / ".env"
+        cwd_url = "http://cwd-takes-precedence.example.com"
+        env_file.write_text(f"REDMINE_URL={cwd_url}\n" f"REDMINE_API_KEY=cwd_key\n")
+
+        test_script = tmp_path / "test_precedence.py"
+        test_script.write_text(
+            """
+import os
+
+# Clear any existing env vars
+for key in ['REDMINE_URL', 'REDMINE_API_KEY', 'REDMINE_USERNAME', 'REDMINE_PASSWORD']:
+    os.environ.pop(key, None)
+
+from redmine_mcp_server._client import REDMINE_URL
+print(f"REDMINE_URL={REDMINE_URL}")
+"""
+        )
+
+        result = subprocess.run(
+            [sys.executable, str(test_script)],
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "PYTHONPATH": str(Path(__file__).parent.parent / "src"),
+            },
+        )
+
+        assert result.returncode == 0, f"Script failed: {result.stderr}"
+        assert f"REDMINE_URL={cwd_url}" in result.stdout, (
+            f"CWD .env should take precedence. " f"stdout: {result.stdout}"
+        )
+
+
+class TestEnvLoadingUnit:
+    """Unit tests that don't require subprocess."""
+
+    def test_env_paths_variable_exists(self):
+        """Test that _env_paths is defined in the module."""
+        from redmine_mcp_server import _client as redmine_handler
+
+        assert hasattr(
+            redmine_handler, "_env_paths"
+        ), "_env_paths should be defined for env file search"
+
+    def test_env_paths_contains_cwd(self):
+        """Test that _env_paths contains current working directory."""
+        from redmine_mcp_server._client import _env_paths
+
+        cwd_env = Path.cwd() / ".env"
+        assert (
+            cwd_env in _env_paths
+        ), "Current working directory .env should be in search paths"
+
+    def test_env_loaded_flag_exists(self):
+        """Test that _env_loaded flag is defined."""
+        from redmine_mcp_server import _client as redmine_handler
+
+        assert hasattr(
+            redmine_handler, "_env_loaded"
+        ), "_env_loaded flag should be defined"
+
+
+class TestOAuthIntrospectionEnv:
+    """Validation of REDMINE_INTROSPECT_CLIENT_ID / _SECRET in OAuth mode."""
+
+    def test_get_introspection_credentials_returns_both_when_set(self, monkeypatch):
+        monkeypatch.setenv("REDMINE_INTROSPECT_CLIENT_ID", "client-id-x")
+        monkeypatch.setenv("REDMINE_INTROSPECT_CLIENT_SECRET", "client-secret-y")
+        import importlib
+        from redmine_mcp_server import _env
+
+        importlib.reload(_env)
+        assert _env.get_introspection_credentials() == (
+            "client-id-x",
+            "client-secret-y",
+        )
+
+    def test_get_introspection_credentials_reads_secret_file(
+        self, monkeypatch, tmp_path
+    ):
+        secret_file = tmp_path / "introspection-secret"
+        secret_file.write_text("client-secret-from-file\n", encoding="utf-8")
+        monkeypatch.setenv("REDMINE_INTROSPECT_CLIENT_ID", "client-id-x")
+        monkeypatch.delenv("REDMINE_INTROSPECT_CLIENT_SECRET", raising=False)
+        monkeypatch.setenv("REDMINE_INTROSPECT_CLIENT_SECRET_FILE", str(secret_file))
+        import importlib
+        from redmine_mcp_server import _env
+
+        importlib.reload(_env)
+        assert _env.get_introspection_credentials() == (
+            "client-id-x",
+            "client-secret-from-file",
+        )
+
+    def test_require_introspection_credentials_raises_when_missing(self, monkeypatch):
+        monkeypatch.delenv("REDMINE_INTROSPECT_CLIENT_ID", raising=False)
+        monkeypatch.delenv("REDMINE_INTROSPECT_CLIENT_SECRET", raising=False)
+        import importlib
+        import pytest
+        from redmine_mcp_server import _env
+
+        importlib.reload(_env)
+        with pytest.raises(RuntimeError, match="REDMINE_INTROSPECT_CLIENT_ID"):
+            _env.require_introspection_credentials()
+
+    def test_get_required_secret_reads_secret_file(self, monkeypatch, tmp_path):
+        secret_file = tmp_path / "secret"
+        secret_file.write_text("from-file\n", encoding="utf-8")
+        monkeypatch.delenv("REDMINE_MCP_JWT_SIGNING_KEY", raising=False)
+        monkeypatch.setenv("REDMINE_MCP_JWT_SIGNING_KEY_FILE", str(secret_file))
+
+        from redmine_mcp_server import _env
+
+        assert _env.get_required_secret("REDMINE_MCP_JWT_SIGNING_KEY") == "from-file"
+
+    def test_get_required_secret_raises_when_missing(self, monkeypatch):
+        monkeypatch.delenv("REDMINE_MCP_JWT_SIGNING_KEY", raising=False)
+        monkeypatch.delenv("REDMINE_MCP_JWT_SIGNING_KEY_FILE", raising=False)
+
+        import pytest
+        from redmine_mcp_server import _env
+
+        with pytest.raises(RuntimeError, match="REDMINE_MCP_JWT_SIGNING_KEY"):
+            _env.get_required_secret("REDMINE_MCP_JWT_SIGNING_KEY")
+
+    def test_health_introspection_ttl_default(self, monkeypatch):
+        monkeypatch.delenv("HEALTH_INTROSPECTION_TTL_SECONDS", raising=False)
+        import importlib
+        from redmine_mcp_server import _env
+
+        importlib.reload(_env)
+        assert _env.get_health_introspection_ttl_seconds() == 30
+
+    def test_health_introspection_ttl_custom(self, monkeypatch):
+        monkeypatch.setenv("HEALTH_INTROSPECTION_TTL_SECONDS", "120")
+        import importlib
+        from redmine_mcp_server import _env
+
+        importlib.reload(_env)
+        assert _env.get_health_introspection_ttl_seconds() == 120
+
+
+class TestAllowedClientRedirectURIs:
+    """REDMINE_MCP_ALLOWED_CLIENT_REDIRECT_URIS parsing for oauth-proxy mode."""
+
+    def test_defaults_to_loopback_when_unset(self, monkeypatch):
+        monkeypatch.delenv("REDMINE_MCP_ALLOWED_CLIENT_REDIRECT_URIS", raising=False)
+        from redmine_mcp_server import _env
+
+        assert _env.get_allowed_client_redirect_uris() == [
+            "http://localhost:*",
+            "http://127.0.0.1:*",
+        ]
+
+    def test_star_means_allow_all(self, monkeypatch):
+        monkeypatch.setenv("REDMINE_MCP_ALLOWED_CLIENT_REDIRECT_URIS", "*")
+        from redmine_mcp_server import _env
+
+        assert _env.get_allowed_client_redirect_uris() is None
+
+    def test_parses_comma_and_space_separated_patterns(self, monkeypatch):
+        monkeypatch.setenv(
+            "REDMINE_MCP_ALLOWED_CLIENT_REDIRECT_URIS",
+            "https://a.example.com/*, https://b.example.com/*",
+        )
+        from redmine_mcp_server import _env
+
+        assert _env.get_allowed_client_redirect_uris() == [
+            "https://a.example.com/*",
+            "https://b.example.com/*",
+        ]
+
+    def test_blank_falls_back_to_loopback(self, monkeypatch):
+        monkeypatch.setenv("REDMINE_MCP_ALLOWED_CLIENT_REDIRECT_URIS", "   ")
+        from redmine_mcp_server import _env
+
+        assert _env.get_allowed_client_redirect_uris() == [
+            "http://localhost:*",
+            "http://127.0.0.1:*",
+        ]
+
+
+class TestGetSecretFileErrors:
+    """get_secret should explain which *_FILE var pointed at an unreadable file."""
+
+    def test_missing_secret_file_raises_clear_runtime_error(
+        self, monkeypatch, tmp_path
+    ):
+        missing = tmp_path / "does-not-exist.secret"
+        monkeypatch.delenv("MY_TEST_SECRET", raising=False)
+        monkeypatch.setenv("MY_TEST_SECRET_FILE", str(missing))
+        import pytest
+        from redmine_mcp_server import _env
+
+        with pytest.raises(RuntimeError, match="MY_TEST_SECRET_FILE"):
+            _env.get_secret("MY_TEST_SECRET")

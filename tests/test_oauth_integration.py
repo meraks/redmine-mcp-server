@@ -1,0 +1,184 @@
+"""Live OAuth integration tests against a sandbox Redmine.
+
+Prerequisites (all required, otherwise the suite skips):
+  - REDMINE_URL: reachable sandbox Redmine
+  - REDMINE_INTROSPECT_CLIENT_ID / _SECRET: confidential OAuth app in the
+    sandbox whose introspection is allowed by Doorkeeper's
+    allow_token_introspection block (stock Redmine ships this as false;
+    see docs/oauth-setup.md Step 2b)
+  - REDMINE_OAUTH_TEST_TOKEN: a valid end-user bearer issued by a user-flow
+    OAuth app in the same sandbox
+
+Run with: python tests/run_tests.py --integration
+
+The "revoked token" test is destructive (invalidates the test bearer) and
+gated behind RUN_DESTRUCTIVE_TESTS=1. See docs/contributing.md.
+"""
+
+import base64
+import os
+from unittest.mock import MagicMock, patch
+
+import httpx
+import pytest
+from dotenv import load_dotenv
+
+# Load .env so REDMINE_URL and friends come from the same file the server uses.
+# Runs at module-import time (before pytest evaluates the skip predicate below)
+# so plain ``python -m pytest tests/test_oauth_integration.py`` works without
+# needing to re-pass already-in-.env vars on the command line.
+load_dotenv()
+
+pytestmark = pytest.mark.integration
+
+REDMINE_URL = (os.environ.get("REDMINE_URL") or "").rstrip("/")
+CLIENT_ID = os.environ.get("REDMINE_INTROSPECT_CLIENT_ID")
+CLIENT_SECRET = os.environ.get("REDMINE_INTROSPECT_CLIENT_SECRET")
+TEST_TOKEN = os.environ.get("REDMINE_OAUTH_TEST_TOKEN")
+RUN_DESTRUCTIVE = os.environ.get("RUN_DESTRUCTIVE_TESTS") == "1"
+
+
+def _skip_if_unconfigured():
+    missing = [
+        name
+        for name, val in [
+            ("REDMINE_URL", REDMINE_URL),
+            ("REDMINE_INTROSPECT_CLIENT_ID", CLIENT_ID),
+            ("REDMINE_INTROSPECT_CLIENT_SECRET", CLIENT_SECRET),
+            ("REDMINE_OAUTH_TEST_TOKEN", TEST_TOKEN),
+        ]
+        if not val
+    ]
+    if missing:
+        pytest.skip(
+            "Live OAuth integration not configured. " f"Missing: {', '.join(missing)}"
+        )
+
+
+@pytest.fixture(autouse=True)
+def _check_config():
+    _skip_if_unconfigured()
+
+
+def _basic_auth_header() -> str:
+    return "Basic " + base64.b64encode(f"{CLIENT_ID}:{CLIENT_SECRET}".encode()).decode()
+
+
+@pytest.mark.asyncio
+async def test_real_introspection_call_succeeds():
+    """Smoke test: introspection client can introspect the test token."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.post(
+            f"{REDMINE_URL}/oauth/introspect",
+            headers={
+                "Authorization": _basic_auth_header(),
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            data={"token": TEST_TOKEN, "token_type_hint": "access_token"},
+        )
+    assert r.status_code == 200, f"introspect returned {r.status_code}: {r.text}"
+    body = r.json()
+    assert body.get("active") is True, (
+        "Test token is inactive per introspection. Either it expired, or "
+        "Doorkeeper's allow_token_introspection block is rejecting the "
+        "introspection client (see docs/oauth-setup.md Step 2b)."
+    )
+    assert body.get("scope"), "Active token must have a non-empty scope"
+
+
+@pytest.mark.asyncio
+async def test_unknown_token_rejected():
+    """Random opaque string should yield {"active": false} via introspection."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.post(
+            f"{REDMINE_URL}/oauth/introspect",
+            headers={
+                "Authorization": _basic_auth_header(),
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            data={
+                "token": "definitely-not-a-real-token",
+                "token_type_hint": "access_token",
+            },
+        )
+    assert r.status_code == 200
+    assert r.json().get("active") is False
+
+
+@pytest.mark.asyncio
+async def test_end_to_end_tool_call_via_mcp():
+    """Valid bearer + a real MCP tool call. Verifies the full request path."""
+    from redmine_mcp_server import _client
+
+    access = MagicMock()
+    access.token = TEST_TOKEN
+    with (
+        patch.object(_client, "REDMINE_URL", REDMINE_URL),
+        patch.object(_client, "redmine", None),
+        patch.object(_client, "_legacy_client", None),
+        patch("redmine_mcp_server._client.get_access_token", return_value=access),
+    ):
+        # This test drives the client factory directly rather than through a
+        # tool, so it opts out of the event-loop guard (issue #216).
+        with _client.allow_loop_thread():
+            redmine = _client._get_redmine_client()
+        # Cheap read call to prove the bearer is forwarded correctly.
+        projects = list(redmine.project.all()[:1])
+        assert isinstance(projects, list)
+
+
+@pytest.mark.asyncio
+async def test_scope_advertising_subset_of_sandbox_scopes():
+    """advertised_scopes() must overlap with the scopes the sandbox issues."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.post(
+            f"{REDMINE_URL}/oauth/introspect",
+            headers={
+                "Authorization": _basic_auth_header(),
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            data={"token": TEST_TOKEN, "token_type_hint": "access_token"},
+        )
+    body = r.json()
+    # Guard: an inactive token introspects with no scope, which would make the
+    # overlap check below fail with a misleading "name drift" message. Surface
+    # the real cause (a stale/expired test bearer) instead.
+    assert body.get("active") is True, (
+        "Test token is inactive per introspection, so it carries no scopes. "
+        "Re-mint REDMINE_OAUTH_TEST_TOKEN before reading this as scope drift "
+        "(see docs/contributing.md)."
+    )
+    sandbox_scopes = set((body.get("scope") or "").split())
+    from redmine_mcp_server.oauth_scopes import advertised_scopes
+
+    our_scopes = set(advertised_scopes())
+    assert our_scopes & sandbox_scopes, (
+        "No overlap between advertised scopes and sandbox-issued scopes. "
+        "Possible name drift between oauth_scopes.py and live Doorkeeper config."
+    )
+
+
+@pytest.mark.skipif(not RUN_DESTRUCTIVE, reason="set RUN_DESTRUCTIVE_TESTS=1 to enable")
+@pytest.mark.asyncio
+async def test_revoked_token_rejected():
+    """DESTRUCTIVE: revokes the test bearer, then asserts it's rejected.
+
+    After this test runs, REDMINE_OAUTH_TEST_TOKEN is invalid and must be
+    re-minted before re-running the integration suite.
+    """
+    async with httpx.AsyncClient(timeout=10) as client:
+        rev = await client.post(
+            f"{REDMINE_URL}/oauth/revoke",
+            data={"token": TEST_TOKEN},
+        )
+        assert rev.status_code in (200, 204)
+        r = await client.post(
+            f"{REDMINE_URL}/oauth/introspect",
+            headers={
+                "Authorization": _basic_auth_header(),
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            data={"token": TEST_TOKEN, "token_type_hint": "access_token"},
+        )
+    assert r.status_code == 200
+    assert r.json().get("active") is False
